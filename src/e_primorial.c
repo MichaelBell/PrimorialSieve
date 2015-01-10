@@ -6,6 +6,7 @@
 #define NUM_LEN 3
 #define EL_BITS 15
 #define EL_MASK ((1 << EL_BITS) - 1)
+#define ENTRIES_PER_CORE 1024
 typedef short el;
 typedef int el2;
 
@@ -14,7 +15,7 @@ typedef struct inout_data
   long long p;
   long long res;
 } data_t;
-data_t buf[256] SECTION("shared_dram");
+data_t buf[ENTRIES_PER_CORE*16] SECTION("shared_dram");
 
 typedef el num_t[NUM_LEN];
 typedef el numl_t[NUM_LEN+1];
@@ -132,39 +133,69 @@ unsigned long long invpow2(unsigned long long a, unsigned long long m)
   return (alpha << 1) - v;
 } 
 
-num_t a, b, c;
+#define NUM_PRIM 4
+num_t prim[NUM_PRIM];
 
 unsigned long long doprimorial(unsigned long long p64)
 {
-  num_t p, abar, bbar, res, mi, t;
+  num_t p, primbar, res, mi, t, u;
   el invp = invpow2(p64, 1 << EL_BITS);
   sets(p, p64);
   mont_init(mi, p64);
 
-  mont_step(t, a, mi, p, invp);
-  set(abar, t);
-  mont_step(t, b, mi, p, invp);
-  set(bbar, t);
-  mont_step(t, abar, bbar, p, invp);
-  mont_step(res, t, c, p, invp);
+  mont_step(t, prim[0], mi, p, invp);
+  for (int i = 1; i < NUM_PRIM-1; ++i)
+  {
+    mont_step(primbar, prim[i], mi, p, invp);
+    mont_step(u, primbar, t, p, invp);
+    set(t, u);
+  }
+  
+  mont_step(res, t, prim[NUM_PRIM-1], p, invp);
 
-  return (unsigned long long)res[2] << (EL_BITS*2) | 
+  unsigned long long r64 =
+         (unsigned long long)res[2] << (EL_BITS*2) | 
          (unsigned long long)res[1] << (EL_BITS) |
          res[0];
+  while (r64 >= p64) r64 -= p64;
+  return r64;
 }
+
+void null_isr(int);
 
 int main(void)
 {
-  sets(a, 223092870ll);
-  sets(b, 2756205443ll);
-  sets(c, 907383479ll);
+  e_coreid_t coreid;
+  coreid = e_get_coreid();
+  unsigned int row, col, core;
+  e_coords_from_coreid(coreid, &row, &col);
+  core = row * 4 + col;
 
-  for (int i = 0; i < 256; ++i)
+  sets(prim[0], 223092870ll);
+  sets(prim[1], 2756205443ll);
+  sets(prim[2], 907383479ll);
+  sets(prim[3], 4132280413ll);
+
+  // Must set up a null interrupt routine to allow host to wake us from idle
+  e_irq_attach(E_SYNC, null_isr);
+  e_irq_mask(E_SYNC, E_FALSE);
+  e_irq_global_mask(E_FALSE);
+
+  data_t* bufptr = &buf[core*ENTRIES_PER_CORE];
+
+  while (1)
   {
-    buf[i].res = doprimorial(buf[i].p);
+    // Always work to do immediately
+    for (int i = 0; i < ENTRIES_PER_CORE; ++i)
+    {
+      bufptr[i].res = doprimorial(bufptr[i].p);
+    }
+
+    // Wait for more work
+    __asm__ __volatile__ ("idle");
   }
 
-  __asm__ __volatile__ ("idle");
   return 0;
 }
 
+void __attribute__((interrupt)) null_isr(int x) { return; }
