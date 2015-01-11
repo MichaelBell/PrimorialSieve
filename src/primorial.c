@@ -78,7 +78,8 @@ void genprimes()
     }
   }
   lastp = buf[i-1].p;
-  fprintf(stderr, "Oversieved by %d\n", sizeof(sieve)*8 - j);
+  if (sizeof(sieve)*8 - j < 1000)
+    fprintf(stderr, "Oversieved by %d\n", sizeof(sieve)*8 - j);
 }
 
 // return t such that at = 1 mod m
@@ -189,6 +190,7 @@ void initsieve()
     if (low_primes[i] < 100) continue;
     sievep(low_primes[i]);
   }
+  return;
   
 #define INIT_SIEVE_MB 32
   unsigned base = low_primes[i-1]+2;
@@ -247,13 +249,15 @@ void applysieve()
 
 int main(int argc, char*argv[])
 {
+  long long time = 0;
+  int max_loops = 128;
   unsigned row, col, coreid, first;
   e_platform_t platform;
   e_epiphany_t dev;
   e_mem_t emem;
   struct timespec sleeptime;
   sleeptime.tv_sec = 0;
-  sleeptime.tv_nsec = 1000000;
+  sleeptime.tv_nsec = 100000;
   
   // Generate low primes for sieving
   genlowprimes();
@@ -283,10 +287,17 @@ int main(int argc, char*argv[])
   first = 1;
 
   // Main loop
-  for (int loops = 0; loops < 128; ++loops)
+  for (int loops = 0; loops < max_loops; ++loops)
   {
+    unsigned long long start, end; 
+    struct timespec ts;
+
     // Copy in next batch of primes for epiphany and start the cores
     e_write(&emem, 0, 0, 0x0, buf, _BufSize);
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    start = ts.tv_sec * 1000000000ll + ts.tv_nsec;
+
     for (int i = 0; i < 16; ++i)
     {
       e_start(&dev, i>>2, i&3);
@@ -310,12 +321,20 @@ int main(int argc, char*argv[])
         e_read(&dev, i>>2, i&3, E_REG_STATUS, &status, sizeof(status));
         if ((status & 1) == 0)
           break;
-        fprintf(stderr, ".");
         nanosleep(&sleeptime, NULL);
       }
     }
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    end = ts.tv_sec * 1000000000ll + ts.tv_nsec;
+    end -= start;
+    time += end;
+
     e_read(&emem, 0, 0, 0x0, buf2, _BufSize);
-    fprintf(stderr, "\n%lld\n", buf2[_BufEntries-1].p);
+
+    {
+      fprintf(stderr, "%lld %lld.%04lld\n", buf2[_BufEntries-1].p, end / 1000000000, (end / 100000) % 10000);
+    }
   
 #if 0
     for (int i = 0; i < 16; ++i)
@@ -333,6 +352,10 @@ int main(int argc, char*argv[])
       printf("%u\n", i);
   }
 #endif
+
+  printf("Total time: %lld.%03lld\n", time / 1000000000, (time / 1000000) % 1000);
+  time /= max_loops;
+  printf("Time per loop: %lld.%04lld\n", time / 1000000000, (time / 100000) % 10000);
 
   e_close(&dev);
   e_free(&emem);

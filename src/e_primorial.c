@@ -7,7 +7,8 @@
 #define EL_BITS 15
 #define EL_MASK ((1 << EL_BITS) - 1)
 #define ENTRIES_PER_CORE 1024
-typedef short el;
+typedef int el; // Actually use int not short to avoid conversions
+                // when going in and out of registers.
 typedef int el2;
 
 typedef struct inout_data
