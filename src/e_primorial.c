@@ -6,17 +6,21 @@
 #define NUM_LEN 3
 #define EL_BITS 15
 #define EL_MASK ((1 << EL_BITS) - 1)
-#define ENTRIES_PER_CORE 1024
+#define ENTRIES_PER_CORE 32768
+#define NUM_CORES 16
+#define ENTRIES (ENTRIES_PER_CORE*NUM_CORES)
+
 typedef int el; // Actually use int not short to avoid conversions
                 // when going in and out of registers.
 typedef int el2;
 
-typedef struct inout_data
+typedef struct shared_data
 {
-  long long p;
-  long long res;
+  long long p[ENTRIES];
+  long long res[ENTRIES];
+
 } data_t;
-data_t buf[ENTRIES_PER_CORE*16] SECTION("shared_dram");
+data_t buf SECTION("shared_dram");
 
 typedef el num_t[NUM_LEN];
 typedef el numl_t[NUM_LEN+1];
@@ -115,6 +119,9 @@ static unsigned long long inverse(unsigned long long a, unsigned long long b)
   long long u, v, s, t;
   u = 1; v = 0; s = 0; t = 1;
   alpha = a; beta = b;
+
+  if (a == 0)
+    return 0;
 
   // Keep a = u * alpha + v * beta
   while ((a&1) == 0)
@@ -250,14 +257,15 @@ int main(void)
   e_irq_mask(E_SYNC, E_FALSE);
   e_irq_global_mask(E_FALSE);
 
-  data_t* bufptr = &buf[core*ENTRIES_PER_CORE];
+  unsigned long long* primeptr = &buf.p[core*ENTRIES_PER_CORE];
+  unsigned long long* resptr = &buf.res[core*ENTRIES_PER_CORE];
 
   while (1)
   {
     // Always work to do immediately
     for (int i = 0; i < ENTRIES_PER_CORE; ++i)
     {
-      bufptr[i].res = doprimorial(bufptr[i].p);
+      resptr[i] = doprimorial(primeptr[i]);
     }
 
     // Wait for more work

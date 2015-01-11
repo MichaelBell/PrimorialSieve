@@ -6,20 +6,22 @@
 
 #include <e-hal.h>
 
-typedef struct inout_data
+#define ENTRIES_PER_CORE 32768
+#define NUM_CORES 16
+#define ENTRIES (ENTRIES_PER_CORE*NUM_CORES)
+typedef struct shared_data
 {
-  long long p;
-  long long res;
+  long long p[ENTRIES];
+  long long res[ENTRIES];
 } data_t;
 
-#define _BufEntriesPerCore 1024
-#define _BufEntries (_BufEntriesPerCore*16)
 #define _BufSize   (sizeof(buf))
 #define _BufOffset (0x01000000)
 
-data_t buf[_BufEntries];
-data_t buf2[_BufEntries];
-unsigned int low_primes[100000];
+data_t buf, buf2;
+
+#define NUM_LOW_PRIMES 26000
+unsigned int low_primes[NUM_LOW_PRIMES];
 long long lastp = 0xffffffff;
 
 //#define SIEVE_SIZE (256u*1024u*1024u*8u)
@@ -50,36 +52,101 @@ void genlowprimes()
   }
 }
 
-// Fill buf with the next primes
-void genprimes()
+static unsigned int genprimsieve[256*1024];
+static unsigned int pattern357[105];
+static unsigned genprimsievej;
+static unsigned int genprimoffsets[NUM_LOW_PRIMES];
+static long long base;
+
+void fillsieve();
+
+void initgenprimes()
 {
-  unsigned int sieve[5800] = {0};
-  long long base = lastp+2;
-  int i, j;
-  unsigned max_prime=sqrt(base + sizeof(sieve)*16)+1;
-  for (i = 0; low_primes[i] < max_prime; ++i)
+  for (int i = 0; i < 3; ++i)
   {
-    long long offset = base % low_primes[i];
-    if (offset) offset = low_primes[i] - offset;
-    if (offset & 1) offset += low_primes[i];
-    offset >>= 1;
-    while (offset < sizeof(sieve) * 8)
+    unsigned offset = 0;
+    while (offset < sizeof(pattern357) * 8)
     {
-      sieve[offset >> 5] |= 1<<(offset&0x1f); 
+      pattern357[offset >> 5] |= 1<<(offset&0x1f); 
       offset += low_primes[i];
     }
   }
-  for (i = 0, j = 0; i < sizeof(buf) / sizeof(data_t); ++j)
+
+  base = lastp+2;
+  int i, j;
+  unsigned max_prime=sqrt(base + sizeof(genprimsieve)*16)+1;
+  for (i = 3; i < NUM_LOW_PRIMES; ++i)
   {
-    if ((sieve[j>>5] & (1 << (j&0x1f))) == 0)
+    unsigned offset = base % low_primes[i];
+    if (offset) offset = low_primes[i] - offset;
+    if (offset & 1) offset += low_primes[i];
+    offset >>= 1;
+    genprimoffsets[i] = offset;
+  }
+  base -= sizeof(genprimsieve)*16;
+  fillsieve();
+} 
+
+void fillsieve()
+{
+  base += sizeof(genprimsieve)*16;
+  memset(genprimsieve, 0, sizeof(genprimsieve));
+  int i;
+  unsigned max_prime=sqrt(base + sizeof(genprimsieve)*16)+1;
+  
+  unsigned offset = base % 105;
+  if (offset != 0) {
+    if (offset & 1) offset += 105;
+    offset >>= 1;
+    offset += 105*(offset * 7);
+    offset >>= 5;
+    offset %= 105;
+  }
+  for (i = 0; i < sizeof(genprimsieve) / sizeof(int); ++i)
+  {
+    genprimsieve[i] = pattern357[offset];
+    if (++offset == 105) offset = 0;
+  }
+  for (i = 3; low_primes[i] < max_prime; ++i)
+  {
+    unsigned offset = genprimoffsets[i];
+    while (offset < sizeof(genprimsieve) * 8)
     {
-      buf[i].p = base + (j << 1);
-      buf[i++].res = 0;
+      genprimsieve[offset >> 5] |= 1<<(offset&0x1f); 
+      offset += low_primes[i];
+    }
+    genprimoffsets[i] = offset - (sizeof(genprimsieve) * 8);
+  }
+  for (; i < NUM_LOW_PRIMES; ++i)
+  {
+    unsigned offset = genprimoffsets[i];
+    unsigned mult = (sizeof(genprimsieve) * 8) / low_primes[i];
+    offset += mult * low_primes[i];
+    if (offset < sizeof(genprimsieve) * 8)
+      offset += low_primes[i];
+    genprimoffsets[i] = offset - (sizeof(genprimsieve) * 8);
+  }
+  genprimsievej = 0;
+}
+
+// Fill buf with the next primes
+void genprimes(data_t* bufptr)
+{
+  int i, j;
+
+  for (i = 0; i < ENTRIES; ++genprimsievej)
+  {
+    if (genprimsievej == sizeof(genprimsieve) * 8)
+      fillsieve();
+    unsigned j = genprimsievej;
+    if ((genprimsieve[j>>5] & (1 << (j&0x1f))) == 0)
+    {
+      bufptr->p[i++] = base + (j << 1);
+      //if ((bufptr->p[i-1] % 5) == 0)
+      //  fprintf(stderr, "Sieve broken! %lld\n", bufptr->p[i-1]);
     }
   }
-  lastp = buf[i-1].p;
-  if (sizeof(sieve)*8 - j < 1000)
-    fprintf(stderr, "Oversieved by %d\n", sizeof(sieve)*8 - j);
+  lastp = bufptr->p[i-1];
 }
 
 // return t such that at = 1 mod m
@@ -234,15 +301,22 @@ void initsieve()
   free(sieve);
 }
 
-void applysieve()
+void applysieve(data_t* bufptr)
 {
-  for (int i = 0; i < _BufEntries; ++i)
+  for (int i = 0; i < ENTRIES; ++i)
   {
-    unsigned long long r = (buf2[i].res == 0) ? 0 : (buf2[i].p - buf2[i].res);
-    if (r < SIEVE_SIZE)
+    if (bufptr->res[i] == 0)
     {
-      if ((mainsieve[r>>5] & (1<<(r&0x1f))) == 0) printf("%lld %lld\n", r, buf2[i].p);
-      mainsieve[r >> 5] |= 1<<(r&0x1f);
+      fprintf(stderr, "Bad: res=0 for %lld\n", bufptr->p[i]);
+    }
+    else
+    {
+      unsigned long long r = bufptr->p[i] - bufptr->res[i];
+      if (r < SIEVE_SIZE)
+      {
+        if ((mainsieve[r>>5] & (1<<(r&0x1f))) == 0) printf("%lld %lld\n", r, bufptr->p[i]);
+        mainsieve[r >> 5] |= 1<<(r&0x1f);
+      }
     }
   }
 }
@@ -255,19 +329,23 @@ int main(int argc, char*argv[])
   e_platform_t platform;
   e_epiphany_t dev;
   e_mem_t emem;
+  data_t *curbuf = &buf, *nextbuf = &buf2;
   struct timespec sleeptime;
   sleeptime.tv_sec = 0;
   sleeptime.tv_nsec = 100000;
   
   // Generate low primes for sieving
+  printf("Gen Low Primes\n");
   genlowprimes();
 
   // Allocate and init main sieve
+  printf("Init main sieve\n");
   mainsieve = malloc(SIEVE_SIZE >> 3);
   memset(mainsieve, 0, SIEVE_SIZE >> 3);
   initsieve();
 
   // Start up epiphany
+  printf("Init epiphany\n");
   e_init(NULL);
   e_reset_system();
   e_get_platform_info(&platform);
@@ -283,7 +361,9 @@ int main(int argc, char*argv[])
   e_load_group("e_primorial.srec", &dev, 0, 0, platform.rows, platform.cols, E_FALSE);
 
   // Generate first batch of primes to work on
-  genprimes();
+  printf("Init gen primes\n");
+  initgenprimes();
+  genprimes(nextbuf);
   first = 1;
 
   // Main loop
@@ -294,7 +374,7 @@ int main(int argc, char*argv[])
     struct timespec ts;
 
     // Copy in next batch of primes for epiphany and start the cores
-    e_write(&emem, 0, 0, 0x0, buf, _BufSize);
+    e_write(&emem, 0, 0, 0x0, nextbuf->p, sizeof(buf.p));
 
     clock_gettime(CLOCK_MONOTONIC, &ts);
     start = ts.tv_sec * 1000000000ll + ts.tv_nsec;
@@ -303,15 +383,22 @@ int main(int argc, char*argv[])
     {
       e_start(&dev, i>>2, i&3);
     }
-    
-    // Generate next batch while they are running
-    genprimes();
-    
-    // And apply last results (if not first time)
+
+    // Apply last results (if not first time)
     if (!first)
-      applysieve();
+      applysieve(curbuf);
     else
       first = 0;
+
+    // Swap buffers
+    {
+      data_t* tmp = nextbuf;
+      nextbuf = curbuf;
+      curbuf = tmp;
+    }
+
+    // Generate next batch of primes
+    genprimes(nextbuf);
 
     // Wait for epiphany cores.
     for (int i = 0; i < 16; ++i)
@@ -324,6 +411,7 @@ int main(int argc, char*argv[])
           break;
         nanosleep(&sleeptime, NULL);
         ++sleeps;
+        if (sleeps == 10000) fprintf(stderr, "Core %d stuck\n", i);
       }
     }
 
@@ -332,10 +420,10 @@ int main(int argc, char*argv[])
     end -= start;
     time += end;
 
-    e_read(&emem, 0, 0, 0x0, buf2, _BufSize);
+    e_read(&emem, 0, 0, sizeof(buf.p), curbuf->res, sizeof(buf.res));
 
     {
-      fprintf(stderr, "%lld %lld.%04lld %d\n", buf2[_BufEntries-1].p, end / 1000000000, (end / 100000) % 10000, sleeps);
+      fprintf(stderr, "%lld %lld.%04lld %d\n", curbuf->p[ENTRIES-1], end / 1000000000, (end / 100000) % 10000, sleeps);
     }
   
 #if 0
@@ -345,7 +433,7 @@ int main(int argc, char*argv[])
 #endif
   }
 
-  applysieve();
+  applysieve(curbuf);
 
 #if 0
   for (unsigned i = 0; i < SIEVE_SIZE; ++i)

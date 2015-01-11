@@ -26,7 +26,7 @@ esac
 ${CROSS_PREFIX}gcc -O3 -std=gnu99 src/primorial.c -o bin/primorial.elf -I ${EINCS} -L ${ELIBS} -le-hal  -lm #-le-loader
 
 # Build DEVICE side program
-e-gcc -O3 -T ${ELDF} -std=c99 src/e_primorial.c -o bin/e_primorial.elf -le-lib -lm -ffast-math -mfp-mode=int
+e-gcc -O3 -g -T ${ELDF} -std=c99 src/e_primorial.c -o bin/e_primorial.elf -le-lib -lm -ffast-math -mfp-mode=int
 e-gcc -O3 -S -T ${ELDF} -std=c99 src/e_primorial.c -o bin/e_primorial.s -le-lib -lm -ffast-math -mfp-mode=int
 
 # Convert ebinary to SREC file
