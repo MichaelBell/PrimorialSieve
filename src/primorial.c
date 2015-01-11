@@ -54,9 +54,6 @@ void genlowprimes()
 }
 
 #define GEN_PRIME_SIEVE_SIZE 128*1024*4
-static unsigned int genprimsieve1[128*1024];
-static unsigned int genprimsieve2[128*1024];
-
 static unsigned int* genprimsieve;
 static unsigned int* genprimsievenext;
 static unsigned int genprimsievenextready;
@@ -99,12 +96,14 @@ void initgenprimes()
     offset >>= 1;
     genprimoffsets[i] = offset;
   }
-  fillsieve(genprimsieve1, base);
-  genprimsieve = genprimsieve1;
+
+  genprimsieve = malloc(GEN_PRIME_SIEVE_SIZE);
+  genprimsievenext = malloc(GEN_PRIME_SIEVE_SIZE);
+  
+  fillsieve(genprimsieve, base);
   genprimsievej = 0;
 
   pthread_t genthread;
-  genprimsievenext = genprimsieve2;
   genprimsievenextready = 0;
   genprimsievewait = 0;
   pthread_mutex_init(&genprimsieve_mutex, NULL);
@@ -125,12 +124,13 @@ void fillsieve(unsigned int* mysieve, long long mybase)
     offset >>= 5;
     offset %= 15015;
   }
-  for (i = 0; i < GEN_PRIME_SIEVE_SIZE / sizeof(int); ++i)
+  i = 15015 - offset;
+  memcpy(mysieve, &pattern[offset], sizeof(int) * (i));
+  for (; i + 15015 < GEN_PRIME_SIEVE_SIZE / sizeof(int); i+=15015)
   {
-    // TODO: memcpy would probably be faster.
-    mysieve[i] = pattern[offset];
-    if (++offset == 15015) offset = 0;
+    memcpy(&mysieve[i], pattern, 15015 * sizeof(int));
   }
+  memcpy(&mysieve[i], pattern, sizeof(int) * (GEN_PRIME_SIEVE_SIZE / sizeof(int) - i));
   for (i = 5; low_primes[i] < max_prime; ++i)
   {
     unsigned offset = genprimoffsets[i];
@@ -201,8 +201,8 @@ void genprimes(data_t* bufptr)
     if ((genprimsieve[j>>5] & (1 << (j&0x1f))) == 0)
     {
       bufptr->p[i++] = base + (j << 1);
-      if ((bufptr->p[i-1] % 5) == 0)
-        fprintf(stderr, "Sieve broken! %lld\n", bufptr->p[i-1]);
+      //if ((bufptr->p[i-1] % 5) == 0)
+      //  fprintf(stderr, "Sieve broken! %lld\n", bufptr->p[i-1]);
     }
   }
   lastp = bufptr->p[i-1];
@@ -316,7 +316,7 @@ void initsieve()
     if (low_primes[i] < 100) continue;
     sievep(low_primes[i]);
   }
-  return;
+  //return;
   
 #define INIT_SIEVE_MB 32
   unsigned base = low_primes[i-1]+2;
@@ -332,12 +332,13 @@ void initsieve()
       offset >>= 5;
       offset %= 15015;
     }
-    for (i = 0; i < INIT_SIEVE_MB*1024*1024/4; ++i)
+    i = 15015 - offset;
+    memcpy(sieve, &pattern[offset], sizeof(int) * (i));
+    for (; i + 15015 < INIT_SIEVE_MB*1024*1024 / sizeof(int); i+=15015)
     {
-      // TODO: memcpy would probably be faster.
-      sieve[i] = pattern[offset];
-      if (++offset == 15015) offset = 0;
+      memcpy(&sieve[i], pattern, 15015 * sizeof(int));
     }
+    memcpy(&sieve[i], pattern, sizeof(int) * ((INIT_SIEVE_MB*1024*1024 / sizeof(int)) - i));
 
     unsigned max_prime=sqrt(base + INIT_SIEVE_MB*1024*1024*16.0)+1;
     fprintf(stderr, "...\r");
