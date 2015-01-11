@@ -21,13 +21,13 @@ data_t buf[ENTRIES_PER_CORE*16] SECTION("shared_dram");
 typedef el num_t[NUM_LEN];
 typedef el numl_t[NUM_LEN+1];
 
-void zero(el* v)
+static void zero(el* v)
 {
   for (int i = 0; i < NUM_LEN; ++i)
     v[i] = 0;
 }
 
-void sets(el* a, long long b)
+static void sets(el* a, long long b)
 {
   for (int i = 0; i < NUM_LEN; ++i)
   {
@@ -36,13 +36,13 @@ void sets(el* a, long long b)
   }
 }
 
-void set(el* a, el* b)
+static void set(el* a, el* b)
 {
   for (int i = 0; i < NUM_LEN; ++i)
     a[i] = b[i];
 }
 
-void addl(el* res, el* a, el* b)
+static void addl(el* res, el* a, el* b)
 {
   el c = 0;
   for (int i = 0; i < NUM_LEN+1; ++i)
@@ -53,7 +53,7 @@ void addl(el* res, el* a, el* b)
   }
 } 
 
-void mult(el* res, el* a, el b)
+static void mult(el* res, el* a, el b)
 {
   el c = 0;
   for (int i = 0; i < NUM_LEN; ++i)
@@ -65,7 +65,7 @@ void mult(el* res, el* a, el b)
   res[NUM_LEN] = c;
 } 
 
-void mont_step(el* res, el* a, el* b, el* p, el invp)
+static void mont_step(el* res, el* a, el* b, el* p, el invp)
 {
   numl_t t;
   numl_t r = {0};
@@ -85,26 +85,7 @@ void mont_step(el* res, el* a, el* b, el* p, el invp)
   set(res, r);
 }
 
-void mont_inverse(el* res, el* abar, unsigned long long p64, el* p, el invp)
-{
-  num_t base,t;
-  unsigned long long exp = (p64 - 2) >> 1;
-  set(res, abar);
-  set(base, abar);
-  while (exp > 0)
-  {
-    mont_step(t, base, base, p, invp);
-    set(base, t);
-    if (exp & 1)
-    {  
-      mont_step(t, base, res, p, invp);
-      set(res, t);
-    }
-    exp >>= 1;
-  }
-}
-
-unsigned long long mulmod64(unsigned long long a, unsigned long long b, unsigned long long p)
+static unsigned long long mulmod64(unsigned long long a, unsigned long long b, unsigned long long p)
 {
   unsigned long long acc = 0;
   for (int i = 45; i >= 0; --i)
@@ -120,7 +101,7 @@ unsigned long long mulmod64(unsigned long long a, unsigned long long b, unsigned
   return acc;
 }
 
-void mont_init(el* res, unsigned long long p)
+static void mont_init(el* res, unsigned long long p)
 {
   unsigned long long r = 1ll << 45;
   r %= p;
@@ -128,7 +109,7 @@ void mont_init(el* res, unsigned long long p)
   sets(res, r);
 }
 
-unsigned long long inverse(unsigned long long a, unsigned long long b)
+static unsigned long long inverse(unsigned long long a, unsigned long long b)
 {
   long long alpha, beta;
   long long u, v, s, t;
@@ -192,7 +173,7 @@ unsigned long long inverse(unsigned long long a, unsigned long long b)
   return s;
 }
 
-unsigned long long invpow2(unsigned long long a, unsigned long long m)
+static unsigned long long invpow2(unsigned long long a, unsigned long long m)
 {
   // m is a power of 2.
   m >>= 1;

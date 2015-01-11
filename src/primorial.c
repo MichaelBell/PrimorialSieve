@@ -289,6 +289,7 @@ int main(int argc, char*argv[])
   // Main loop
   for (int loops = 0; loops < max_loops; ++loops)
   {
+    unsigned sleeps = 0;
     unsigned long long start, end; 
     struct timespec ts;
 
@@ -322,6 +323,7 @@ int main(int argc, char*argv[])
         if ((status & 1) == 0)
           break;
         nanosleep(&sleeptime, NULL);
+        ++sleeps;
       }
     }
 
@@ -333,7 +335,7 @@ int main(int argc, char*argv[])
     e_read(&emem, 0, 0, 0x0, buf2, _BufSize);
 
     {
-      fprintf(stderr, "%lld %lld.%04lld\n", buf2[_BufEntries-1].p, end / 1000000000, (end / 100000) % 10000);
+      fprintf(stderr, "%lld %lld.%04lld %d\n", buf2[_BufEntries-1].p, end / 1000000000, (end / 100000) % 10000, sleeps);
     }
   
 #if 0
