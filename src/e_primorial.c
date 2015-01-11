@@ -84,6 +84,25 @@ void mont_step(el* res, el* a, el* b, el* p, el invp)
   set(res, r);
 }
 
+void mont_inverse(el* res, el* abar, unsigned long long p64, el* p, el invp)
+{
+  num_t base,t;
+  unsigned long long exp = (p64 - 2) >> 1;
+  set(res, abar);
+  set(base, abar);
+  while (exp > 0)
+  {
+    mont_step(t, base, base, p, invp);
+    set(base, t);
+    if (exp & 1)
+    {  
+      mont_step(t, base, res, p, invp);
+      set(res, t);
+    }
+    exp >>= 1;
+  }
+}
+
 unsigned long long mulmod64(unsigned long long a, unsigned long long b, unsigned long long p)
 {
   unsigned long long acc = 0;
@@ -138,20 +157,26 @@ num_t prim[NUM_PRIM];
 
 unsigned long long doprimorial(unsigned long long p64)
 {
-  num_t p, primbar, res, mi, t, u;
+  num_t p, primbar, res, mi, t, u, one;
   el invp = invpow2(p64, 1 << EL_BITS);
   sets(p, p64);
   mont_init(mi, p64);
 
+  // Compute t = n# (mont space)
   mont_step(t, prim[0], mi, p, invp);
-  for (int i = 1; i < NUM_PRIM-1; ++i)
+  for (int i = 1; i < NUM_PRIM; ++i)
   {
     mont_step(primbar, prim[i], mi, p, invp);
     mont_step(u, primbar, t, p, invp);
     set(t, u);
   }
   
-  mont_step(res, t, prim[NUM_PRIM-1], p, invp);
+  // Compute u = (n#)^-1 (mont space)
+  mont_inverse(u, t, p64, p, invp);
+
+  // Get out of mont space.
+  sets(one, 1);
+  mont_step(res, u, one, p, invp);
 
   unsigned long long r64 =
          (unsigned long long)res[2] << (EL_BITS*2) | 

@@ -1,3 +1,5 @@
+from operator import mul
+
 def sundaram3(max_n):
     numbers = range(3, max_n+1, 2)
     half = (max_n)//2
@@ -10,6 +12,9 @@ def sundaram3(max_n):
 
         if initial > half:
             return [2] + filter(None, numbers)
+
+def primorial(n):
+  return reduce(mul, sundaram3(n), 1)
 
 sieve = sundaram3(70000)
 
