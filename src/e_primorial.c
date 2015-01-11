@@ -14,13 +14,14 @@ typedef int el; // Actually use int not short to avoid conversions
                 // when going in and out of registers.
 typedef int el2;
 
+
 typedef struct shared_data
 {
   long long p[ENTRIES];
   long long res[ENTRIES];
 
 } data_t;
-data_t buf SECTION("shared_dram");
+data_t* buf = (data_t*)0x8f000000;
 
 typedef el num_t[NUM_LEN];
 typedef el numl_t[NUM_LEN+1];
@@ -257,8 +258,8 @@ int main(void)
   e_irq_mask(E_SYNC, E_FALSE);
   e_irq_global_mask(E_FALSE);
 
-  unsigned long long* primeptr = &buf.p[core*ENTRIES_PER_CORE];
-  unsigned long long* resptr = &buf.res[core*ENTRIES_PER_CORE];
+  unsigned long long* primeptr = &buf->p[core*ENTRIES_PER_CORE];
+  unsigned long long* resptr = &buf->res[core*ENTRIES_PER_CORE];
 
   while (1)
   {

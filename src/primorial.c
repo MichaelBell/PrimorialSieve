@@ -53,29 +53,32 @@ void genlowprimes()
 }
 
 static unsigned int genprimsieve[256*1024];
-static unsigned int pattern357[105];
+static unsigned int pattern[15015];
 static unsigned genprimsievej;
 static unsigned int genprimoffsets[NUM_LOW_PRIMES];
 static long long base;
+
+void initpattern()
+{
+  for (int i = 0; i < 5; ++i)
+  {
+    unsigned offset = 0;
+    while (offset < sizeof(pattern) * 8)
+    {
+      pattern[offset >> 5] |= 1<<(offset&0x1f); 
+      offset += low_primes[i];
+    }
+  }
+}
 
 void fillsieve();
 
 void initgenprimes()
 {
-  for (int i = 0; i < 3; ++i)
-  {
-    unsigned offset = 0;
-    while (offset < sizeof(pattern357) * 8)
-    {
-      pattern357[offset >> 5] |= 1<<(offset&0x1f); 
-      offset += low_primes[i];
-    }
-  }
-
   base = lastp+2;
   int i, j;
   unsigned max_prime=sqrt(base + sizeof(genprimsieve)*16)+1;
-  for (i = 3; i < NUM_LOW_PRIMES; ++i)
+  for (i = 5; i < NUM_LOW_PRIMES; ++i)
   {
     unsigned offset = base % low_primes[i];
     if (offset) offset = low_primes[i] - offset;
@@ -94,18 +97,19 @@ void fillsieve()
   int i;
   unsigned max_prime=sqrt(base + sizeof(genprimsieve)*16)+1;
   
-  unsigned offset = base % 105;
+  unsigned offset = base % 15015;
   if (offset != 0) {
-    if (offset & 1) offset += 105;
+    if (offset & 1) offset += 15015;
     offset >>= 1;
-    offset += 105*(offset * 7);
+    offset += 15015*(offset * 9);
     offset >>= 5;
-    offset %= 105;
+    offset %= 15015;
   }
   for (i = 0; i < sizeof(genprimsieve) / sizeof(int); ++i)
   {
-    genprimsieve[i] = pattern357[offset];
-    if (++offset == 105) offset = 0;
+    // TODO: memcpy would probably be faster.
+    genprimsieve[i] = pattern[offset];
+    if (++offset == 15015) offset = 0;
   }
   for (i = 3; low_primes[i] < max_prime; ++i)
   {
@@ -257,7 +261,7 @@ void initsieve()
     if (low_primes[i] < 100) continue;
     sievep(low_primes[i]);
   }
-  return;
+  //return;
   
 #define INIT_SIEVE_MB 32
   unsigned base = low_primes[i-1]+2;
@@ -265,10 +269,24 @@ void initsieve()
   
   while (1)
   {
-    memset(sieve, 0, INIT_SIEVE_MB*1024*1024);
+    unsigned offset = base % 15015;
+    if (offset != 0) {
+      if (offset & 1) offset += 15015;
+      offset >>= 1;
+      offset += 15015*(offset * 9);
+      offset >>= 5;
+      offset %= 15015;
+    }
+    for (i = 0; i < INIT_SIEVE_MB*1024*1024/4; ++i)
+    {
+      // TODO: memcpy would probably be faster.
+      sieve[i] = pattern[offset];
+      if (++offset == 15015) offset = 0;
+    }
+
     unsigned max_prime=sqrt(base + INIT_SIEVE_MB*1024*1024*16.0)+1;
     fprintf(stderr, "...\r");
-    for (i = 0; low_primes[i] < max_prime; ++i)
+    for (i = 5; low_primes[i] < max_prime; ++i)
     {
       unsigned offset = base % low_primes[i];
       if (offset) offset = low_primes[i] - offset;
@@ -285,12 +303,15 @@ void initsieve()
       if ((sieve[i>>5] & (1 << (i&0x1f))) == 0)
       {
         sievep(base + (i << 1));
+//        if ((((base + (i << 1)) % 5) == 0) ||
+//            (((base + (i << 1)) % 17) == 0))
+//          fprintf(stderr, "Sieve broken! %u\n", base + (i << 1));
       }
       if ((i&0xffffff) == 0) 
       {
         struct timespec ts;
         clock_gettime(CLOCK_REALTIME, &ts);
-        fprintf(stderr, "%u %ld.%ld\n", base+(i<<1), ts.tv_sec, ts.tv_nsec/1000000);
+        fprintf(stderr, "%u %ld.%03ld\n", base+(i<<1), ts.tv_sec, ts.tv_nsec/1000000);
       }
     }
     if (base+(i<<1) < base)
@@ -337,6 +358,7 @@ int main(int argc, char*argv[])
   // Generate low primes for sieving
   printf("Gen Low Primes\n");
   genlowprimes();
+  initpattern();
 
   // Allocate and init main sieve
   printf("Init main sieve\n");
