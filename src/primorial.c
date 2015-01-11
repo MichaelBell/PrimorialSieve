@@ -82,13 +82,13 @@ void genprimes()
 }
 
 // return t such that at = 1 mod m
-unsigned inverse(unsigned a, unsigned m)
+unsigned inverse_short(unsigned a, unsigned m)
 {
-  long long t = 0, newt = 1, r = m, newr = a;
+  int t = 0, newt = 1, r = m, newr = a;
   while (newr != 0)
   {
-    long long q = r / newr;
-    long long x = t - q * newt;
+    int q = r / newr;
+    int x = t - q * newt;
     t = newt;
     newt = x;
     x = r - q * newr;
@@ -100,15 +100,83 @@ unsigned inverse(unsigned a, unsigned m)
   return t;
 }
 
+// Assumes m is odd.
+unsigned inverse(unsigned a, unsigned b)
+{
+  if (b < 0x80000000)
+    return inverse_short(a, b);
+
+  unsigned alpha, beta;
+  long long u, v, s, t;
+  u = 1; v = 0; s = 0; t = 1;
+  alpha = a; beta = b;
+
+  // Keep a = u * alpha + v * beta
+  while ((a&1) == 0)
+  {
+    a >>= 1;
+    if ((u|v) & 1)
+    {
+      u = (u + beta) >> 1;
+      v = (v - alpha) >> 1;
+    }
+    else
+    {
+      u >>= 1;
+      v >>= 1;
+    }
+  }
+  while (a!=b)
+  {
+    if ((b&1)==0)
+    {
+      b >>= 1;
+      if ((s|t) & 1)
+      {
+        s = (s + beta) >> 1;
+        t = (t - alpha) >> 1;
+      }
+      else
+      {
+        s >>= 1;
+        t >>= 1;
+      }
+    }
+    else if (b < a)
+    {
+      long long tmp;
+      tmp = a;
+      a = b;
+      b = tmp;
+      tmp = u;
+      u = s;
+      s = tmp;
+      tmp = v;
+      v = t;
+      t = tmp;
+    }
+    else
+    {
+      b = b - a;
+      s = s - u;
+      t = t - v;
+    }
+  }
+  if (a > 1) return 0;
+  while (s < 0) s += beta;
+  while (s >= beta) s -= beta;
+  return s;   
+}
+
 void sievep(unsigned p)
 {
   unsigned n = (223092870ll * 2756205443ll) % p;
   n = (n * 907383479ll) % p;
   n = (n * 4132280413ll) % p;
-  n = inverse(n, p);
-  unsigned r = (n == 0) ? 0 : (p - n);
-  if (p==1795133)
-        fprintf(stderr, "%u %u\n", p, r);
+  unsigned ni = inverse(n, p);
+//  if (((unsigned long long)ni * n) % p != 1)
+//    fprintf(stderr, "Bad inverse %u %u %u\n", ni, n, p);
+  unsigned r = (ni == 0) ? 0 : (p - ni);
   for (; r < SIEVE_SIZE; r+=p)
     mainsieve[r>>5] |= 1<<(r&0x1f);  
 }
@@ -149,7 +217,12 @@ void initsieve()
       {
         sievep(base + (i << 1));
       }
-      if ((i&0xffffff) == 0) fprintf(stderr, "%u\n", base+(i<<1));
+      if ((i&0xffffff) == 0) 
+      {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        fprintf(stderr, "%u %ld.%ld\n", base+(i<<1), ts.tv_sec, ts.tv_nsec/1000000);
+      }
     }
     if (base+(i<<1) < base)
       break;
@@ -253,11 +326,13 @@ int main(int argc, char*argv[])
 
   applysieve();
 
+#if 0
   for (unsigned i = 0; i < SIEVE_SIZE; ++i)
   {
     if ((mainsieve[i>>5] & (1<<(i&0x1f))) == 0)
       printf("%u\n", i);
   }
+#endif
 
   e_close(&dev);
   e_free(&emem);

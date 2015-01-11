@@ -127,6 +127,70 @@ void mont_init(el* res, unsigned long long p)
   sets(res, r);
 }
 
+unsigned long long inverse(unsigned long long a, unsigned long long b)
+{
+  long long alpha, beta;
+  long long u, v, s, t;
+  u = 1; v = 0; s = 0; t = 1;
+  alpha = a; beta = b;
+
+  // Keep a = u * alpha + v * beta
+  while ((a&1) == 0)
+  {
+    a >>= 1;
+    if ((u|v) & 1)
+    {
+      u = (u + beta) >> 1;
+      v = (v - alpha) >> 1;
+    }
+    else
+    {
+      u >>= 1;
+      v >>= 1;
+    }
+  }
+  while (a!=b)
+  {
+    if ((b&1)==0)
+    {
+      b >>= 1;
+      if ((s|t) & 1)
+      {
+        s = (s + beta) >> 1;
+        t = (t - alpha) >> 1;
+      }
+      else
+      {
+        s >>= 1;
+        t >>= 1;
+      }
+    }
+    else if (b < a)
+    {
+      long long tmp;
+      tmp = a;
+      a = b;
+      b = tmp;
+      tmp = u;
+      u = s;
+      s = tmp;
+      tmp = v;
+      v = t;
+      t = tmp;
+    }
+    else
+    {
+      b = b - a;
+      s = s - u;
+      t = t - v;
+    }
+  }
+  if (a > 1) return 0;
+  while (s < 0) s += beta;
+  while (s >= beta) s -= beta;
+  return s;
+}
+
 unsigned long long invpow2(unsigned long long a, unsigned long long m)
 {
   // m is a power of 2.
@@ -164,25 +228,23 @@ unsigned long long doprimorial(unsigned long long p64)
 
   // Compute t = n# (mont space)
   mont_step(t, prim[0], mi, p, invp);
-  for (int i = 1; i < NUM_PRIM; ++i)
+  for (int i = 1; i < NUM_PRIM-1; ++i)
   {
     mont_step(primbar, prim[i], mi, p, invp);
     mont_step(u, primbar, t, p, invp);
     set(t, u);
   }
   
-  // Compute u = (n#)^-1 (mont space)
-  mont_inverse(u, t, p64, p, invp);
-
-  // Get out of mont space.
-  sets(one, 1);
-  mont_step(res, u, one, p, invp);
+  mont_step(res, t, prim[NUM_PRIM-1], p, invp);
 
   unsigned long long r64 =
          (unsigned long long)res[2] << (EL_BITS*2) | 
          (unsigned long long)res[1] << (EL_BITS) |
          res[0];
   while (r64 >= p64) r64 -= p64;
+
+  r64 = inverse(r64, p64);
+
   return r64;
 }
 

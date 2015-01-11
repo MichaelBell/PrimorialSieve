@@ -27,7 +27,7 @@ ${CROSS_PREFIX}gcc -O3 -std=gnu99 src/primorial.c -o bin/primorial.elf -I ${EINC
 
 # Build DEVICE side program
 e-gcc -O3 -T ${ELDF} -std=c99 src/e_primorial.c -o bin/e_primorial.elf -le-lib -lm -ffast-math -mfp-mode=int
-#e-gcc -O3 -S -T ${ELDF} src/e_math_test.c -o bin/e_math_test.s -le-lib -lm -ffast-math
+e-gcc -O3 -S -T ${ELDF} -std=c99 src/e_primorial.c -o bin/e_primorial.s -le-lib -lm -ffast-math -mfp-mode=int
 
 # Convert ebinary to SREC file
 e-objcopy --srec-forceS3 --output-target srec bin/e_primorial.elf bin/e_primorial.srec
