@@ -23,7 +23,7 @@ case $(uname -p) in
 esac
 
 # Build HOST side application
-${CROSS_PREFIX}gcc -O3 -std=gnu99 src/primorial.c -o bin/primorial.elf -I ${EINCS} -L ${ELIBS} -le-hal  -lm #-le-loader
+${CROSS_PREFIX}gcc -O3 -std=gnu99 src/primorial.c -o bin/primorial.elf -I ${EINCS} -L ${ELIBS} -le-hal  -lm -lpthread #-le-loader
 
 # Build DEVICE side program
 e-gcc -O3 -g -T ${ELDF} -std=c99 src/e_primorial.c -o bin/e_primorial.elf -le-lib -lm -ffast-math -mfp-mode=int

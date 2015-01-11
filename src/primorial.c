@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <pthread.h>
 
 #include <e-hal.h>
 
@@ -52,7 +53,18 @@ void genlowprimes()
   }
 }
 
-static unsigned int genprimsieve[256*1024];
+#define GEN_PRIME_SIEVE_SIZE 128*1024*4
+static unsigned int genprimsieve1[128*1024];
+static unsigned int genprimsieve2[128*1024];
+
+static unsigned int* genprimsieve;
+static unsigned int* genprimsievenext;
+static unsigned int genprimsievenextready;
+static unsigned int genprimsievewait;
+static pthread_mutex_t genprimsieve_mutex;
+static pthread_cond_t genprimsieve_cv;
+static pthread_cond_t genprimsievewait_cv;
+
 static unsigned int pattern[15015];
 static unsigned genprimsievej;
 static unsigned int genprimoffsets[NUM_LOW_PRIMES];
@@ -72,12 +84,13 @@ void initpattern()
 }
 
 void fillsieve();
+void* sievethread(void* unused);
+
 
 void initgenprimes()
 {
   base = lastp+2;
   int i, j;
-  unsigned max_prime=sqrt(base + sizeof(genprimsieve)*16)+1;
   for (i = 5; i < NUM_LOW_PRIMES; ++i)
   {
     unsigned offset = base % low_primes[i];
@@ -86,18 +99,25 @@ void initgenprimes()
     offset >>= 1;
     genprimoffsets[i] = offset;
   }
-  base -= sizeof(genprimsieve)*16;
-  fillsieve();
+  fillsieve(genprimsieve1, base);
+  genprimsieve = genprimsieve1;
+  genprimsievej = 0;
+
+  pthread_t genthread;
+  genprimsievenext = genprimsieve2;
+  genprimsievenextready = 0;
+  genprimsievewait = 0;
+  pthread_mutex_init(&genprimsieve_mutex, NULL);
+  pthread_cond_init (&genprimsieve_cv, NULL);
+  pthread_create(&genthread, NULL, sievethread, NULL);
 } 
 
-void fillsieve()
+void fillsieve(unsigned int* mysieve, long long mybase)
 {
-  base += sizeof(genprimsieve)*16;
-  memset(genprimsieve, 0, sizeof(genprimsieve));
   int i;
-  unsigned max_prime=sqrt(base + sizeof(genprimsieve)*16)+1;
+  unsigned max_prime=sqrt(mybase + GEN_PRIME_SIEVE_SIZE*16)+1;
   
-  unsigned offset = base % 15015;
+  unsigned offset = mybase % 15015;
   if (offset != 0) {
     if (offset & 1) offset += 15015;
     offset >>= 1;
@@ -105,32 +125,50 @@ void fillsieve()
     offset >>= 5;
     offset %= 15015;
   }
-  for (i = 0; i < sizeof(genprimsieve) / sizeof(int); ++i)
+  for (i = 0; i < GEN_PRIME_SIEVE_SIZE / sizeof(int); ++i)
   {
     // TODO: memcpy would probably be faster.
-    genprimsieve[i] = pattern[offset];
+    mysieve[i] = pattern[offset];
     if (++offset == 15015) offset = 0;
   }
-  for (i = 3; low_primes[i] < max_prime; ++i)
+  for (i = 5; low_primes[i] < max_prime; ++i)
   {
     unsigned offset = genprimoffsets[i];
-    while (offset < sizeof(genprimsieve) * 8)
+    while (offset < GEN_PRIME_SIEVE_SIZE * 8)
     {
-      genprimsieve[offset >> 5] |= 1<<(offset&0x1f); 
+      mysieve[offset >> 5] |= 1<<(offset&0x1f); 
       offset += low_primes[i];
     }
-    genprimoffsets[i] = offset - (sizeof(genprimsieve) * 8);
+    genprimoffsets[i] = offset - (GEN_PRIME_SIEVE_SIZE * 8);
   }
   for (; i < NUM_LOW_PRIMES; ++i)
   {
     unsigned offset = genprimoffsets[i];
-    unsigned mult = (sizeof(genprimsieve) * 8) / low_primes[i];
+    unsigned mult = (GEN_PRIME_SIEVE_SIZE * 8) / low_primes[i];
     offset += mult * low_primes[i];
-    if (offset < sizeof(genprimsieve) * 8)
+    if (offset < GEN_PRIME_SIEVE_SIZE * 8)
       offset += low_primes[i];
-    genprimoffsets[i] = offset - (sizeof(genprimsieve) * 8);
+    genprimoffsets[i] = offset - (GEN_PRIME_SIEVE_SIZE * 8);
   }
-  genprimsievej = 0;
+}
+
+void* sievethread(void* unused)
+{
+  while (1)
+  {
+    long long nextbase = base + GEN_PRIME_SIEVE_SIZE * 16;
+    fillsieve(genprimsievenext, nextbase);
+    
+    pthread_mutex_lock(&genprimsieve_mutex);
+    genprimsievenextready = 1;
+    if (genprimsievewait == 1)
+    {
+      genprimsievewait = 0;
+      pthread_cond_signal(&genprimsievewait_cv);
+    }
+    pthread_cond_wait(&genprimsieve_cv, &genprimsieve_mutex);
+    pthread_mutex_unlock(&genprimsieve_mutex);
+  }
 }
 
 // Fill buf with the next primes
@@ -140,14 +178,31 @@ void genprimes(data_t* bufptr)
 
   for (i = 0; i < ENTRIES; ++genprimsievej)
   {
-    if (genprimsievej == sizeof(genprimsieve) * 8)
-      fillsieve();
+    if (genprimsievej == GEN_PRIME_SIEVE_SIZE * 8)
+    {
+      pthread_mutex_lock(&genprimsieve_mutex);
+      if (!genprimsievenextready)
+      {
+        fprintf(stderr, "Wait for sieve thread\n");
+        genprimsievewait = 1;
+        pthread_cond_wait(&genprimsievewait_cv, &genprimsieve_mutex);
+      }
+
+      base += GEN_PRIME_SIEVE_SIZE * 16;
+      genprimsievej = 0;
+      unsigned int* tmp = genprimsieve;
+      genprimsieve = genprimsievenext;
+      genprimsievenext = tmp;
+      genprimsievenextready = 0;
+      pthread_cond_signal(&genprimsieve_cv);
+      pthread_mutex_unlock(&genprimsieve_mutex);
+    }
     unsigned j = genprimsievej;
     if ((genprimsieve[j>>5] & (1 << (j&0x1f))) == 0)
     {
       bufptr->p[i++] = base + (j << 1);
-      //if ((bufptr->p[i-1] % 5) == 0)
-      //  fprintf(stderr, "Sieve broken! %lld\n", bufptr->p[i-1]);
+      if ((bufptr->p[i-1] % 5) == 0)
+        fprintf(stderr, "Sieve broken! %lld\n", bufptr->p[i-1]);
     }
   }
   lastp = bufptr->p[i-1];
@@ -261,7 +316,7 @@ void initsieve()
     if (low_primes[i] < 100) continue;
     sievep(low_primes[i]);
   }
-  //return;
+  return;
   
 #define INIT_SIEVE_MB 32
   unsigned base = low_primes[i-1]+2;
