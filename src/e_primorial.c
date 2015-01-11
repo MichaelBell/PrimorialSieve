@@ -1,4 +1,4 @@
-// Computes 100# mod p
+// Computes 100#^-1 mod p
 // p is read from a shared buffer and the result written back to the buffer
 
 #include "e_lib.h"

@@ -1,3 +1,9 @@
+// Searches for k such that k.100#+1 has no low factors
+//
+// We sieve to 2^32 on the ARM only, then after that the calculation
+// of 100#^-1 mod p is offloaded to the Epiphany, with the ARM only generating
+// primes and applying the result to the sieve.
+
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,6 +13,11 @@
 
 #include <e-hal.h>
 
+// Epiphany data exchange structure
+// Each core reads from its 16th of the prime array
+// and write to its 16th of the result array.
+// Todo: Keep epiphany active all the time
+//       by having second set of primes ready in shared mem
 #define ENTRIES_PER_CORE 32768
 #define NUM_CORES 16
 #define ENTRIES (ENTRIES_PER_CORE*NUM_CORES)
@@ -21,12 +32,15 @@ typedef struct shared_data
 
 data_t buf, buf2;
 
+// 26000 low primes is to just over 300000, so
+// enough to sieve to 90 billion.
 #define NUM_LOW_PRIMES 26000
 unsigned int low_primes[NUM_LOW_PRIMES];
 long long lastp = 0xffffffff;
 
+// Main sieve size - the range of k's to consider.
 //#define SIEVE_SIZE (256u*1024u*1024u*8u)
-#define SIEVE_SIZE (256u*100u*8u)
+#define SIEVE_SIZE (256u*2048u*8u)
 unsigned int* mainsieve;
 
 void genlowprimes()
@@ -53,6 +67,9 @@ void genlowprimes()
   }
 }
 
+// The prime generator sieve for primes over 2^32 to send to the epiphany
+// A worker thread generates primes by sieving, the main thread handles 
+// communication with epiphany and filling results into the main sieve.
 #define GEN_PRIME_SIEVE_SIZE 128*1024*4
 static unsigned int* genprimsieve;
 static unsigned int* genprimsievenext;
@@ -82,7 +99,6 @@ void initpattern()
 
 void fillsieve();
 void* sievethread(void* unused);
-
 
 void initgenprimes()
 {
@@ -295,6 +311,7 @@ unsigned inverse(unsigned a, unsigned b)
   return s;   
 }
 
+// Eliminate low prime from main sieve
 void sievep(unsigned p)
 {
   unsigned n = (223092870ll * 2756205443ll) % p;
@@ -308,6 +325,8 @@ void sievep(unsigned p)
     mainsieve[r>>5] |= 1<<(r&0x1f);  
 }
 
+// Initialize main sieve, sieving to 2^32.
+// This could be multithreaded.
 void initsieve()
 {
   unsigned i, j;
@@ -378,6 +397,7 @@ void initsieve()
   free(sieve);
 }
 
+// Apply results from epiphany to main sieve.
 void applysieve(data_t* bufptr)
 {
   for (int i = 0; i < ENTRIES; ++i)
@@ -391,7 +411,7 @@ void applysieve(data_t* bufptr)
       unsigned long long r = bufptr->p[i] - bufptr->res[i];
       if (r < SIEVE_SIZE)
       {
-        if ((mainsieve[r>>5] & (1<<(r&0x1f))) == 0) printf("%lld %lld\n", r, bufptr->p[i]);
+        //if ((mainsieve[r>>5] & (1<<(r&0x1f))) == 0) printf("%lld %lld\n", r, bufptr->p[i]);
         mainsieve[r >> 5] |= 1<<(r&0x1f);
       }
     }
@@ -401,7 +421,7 @@ void applysieve(data_t* bufptr)
 int main(int argc, char*argv[])
 {
   long long time = 0;
-  int max_loops = 128;
+  int max_loops = 1024;
   unsigned row, col, coreid, first;
   e_platform_t platform;
   e_epiphany_t dev;
@@ -412,18 +432,18 @@ int main(int argc, char*argv[])
   sleeptime.tv_nsec = 100000;
   
   // Generate low primes for sieving
-  printf("Gen Low Primes\n");
+  fprintf(stderr, "Gen Low Primes\n");
   genlowprimes();
   initpattern();
 
   // Allocate and init main sieve
-  printf("Init main sieve\n");
+  fprintf(stderr, "Init main sieve\n");
   mainsieve = malloc(SIEVE_SIZE >> 3);
   memset(mainsieve, 0, SIEVE_SIZE >> 3);
   initsieve();
 
   // Start up epiphany
-  printf("Init epiphany\n");
+  fprintf(stderr, "Init epiphany\n");
   e_init(NULL);
   e_reset_system();
   e_get_platform_info(&platform);
@@ -439,7 +459,7 @@ int main(int argc, char*argv[])
   e_load_group("e_primorial.srec", &dev, 0, 0, platform.rows, platform.cols, E_FALSE);
 
   // Generate first batch of primes to work on
-  printf("Init gen primes\n");
+  fprintf(stderr, "Init gen primes\n");
   initgenprimes();
   genprimes(nextbuf);
   first = 1;
@@ -462,7 +482,7 @@ int main(int argc, char*argv[])
       e_start(&dev, i>>2, i&3);
     }
 
-    // Apply last results (if not first time)
+    // Apply last results while epiphany running (if not first time)
     if (!first)
       applysieve(curbuf);
     else
@@ -475,10 +495,10 @@ int main(int argc, char*argv[])
       curbuf = tmp;
     }
 
-    // Generate next batch of primes
+    // Generate next batch of primes to send
     genprimes(nextbuf);
 
-    // Wait for epiphany cores.
+    // Wait for epiphany cores to complete.
     for (int i = 0; i < 16; ++i)
     {
       while (1)
@@ -498,6 +518,7 @@ int main(int argc, char*argv[])
     end -= start;
     time += end;
 
+    // Read results back
     e_read(&emem, 0, 0, sizeof(buf.p), curbuf->res, sizeof(buf.res));
 
     {
@@ -511,9 +532,11 @@ int main(int argc, char*argv[])
 #endif
   }
 
+  // Process last set of results.
   applysieve(curbuf);
 
-#if 0
+#if 1
+  // Print k's with no low factor.
   for (unsigned i = 0; i < SIEVE_SIZE; ++i)
   {
     if ((mainsieve[i>>5] & (1<<(i&0x1f))) == 0)
@@ -521,9 +544,9 @@ int main(int argc, char*argv[])
   }
 #endif
 
-  printf("Total time: %lld.%03lld\n", time / 1000000000, (time / 1000000) % 1000);
+  fprintf(stderr, "Time in main loop: %lld.%03lld\n", time / 1000000000, (time / 1000000) % 1000);
   time /= max_loops;
-  printf("Time per loop: %lld.%04lld\n", time / 1000000000, (time / 100000) % 10000);
+  fprintf(stderr, "Time per loop: %lld.%04lld\n", time / 1000000000, (time / 100000) % 10000);
 
   e_close(&dev);
   e_free(&emem);
