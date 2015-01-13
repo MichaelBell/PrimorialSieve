@@ -70,7 +70,8 @@ void genlowprimes()
 // The prime generator sieve for primes over 2^32 to send to the epiphany
 // A worker thread generates primes by sieving, the main thread handles 
 // communication with epiphany and filling results into the main sieve.
-#define GEN_PRIME_SIEVE_SIZE 128*1024*4
+// Keep this buffer quite small to fit in the ARM L2 cache
+#define GEN_PRIME_SIEVE_SIZE 64*1024*4
 static unsigned int* genprimsieve;
 static unsigned int* genprimsievenext;
 static unsigned int genprimsievenextready;
@@ -199,7 +200,7 @@ void genprimes(data_t* bufptr)
       pthread_mutex_lock(&genprimsieve_mutex);
       if (!genprimsievenextready)
       {
-        fprintf(stderr, "Wait for sieve thread\n");
+        //fprintf(stderr, "Wait for sieve thread\n");
         genprimsievewait = 1;
         pthread_cond_wait(&genprimsievewait_cv, &genprimsieve_mutex);
       }
@@ -335,7 +336,7 @@ void initsieve()
     if (low_primes[i] < 100) continue;
     sievep(low_primes[i]);
   }
-  //return;
+  return;
   
 #define INIT_SIEVE_MB 32
   unsigned base = low_primes[i-1]+2;
@@ -421,7 +422,7 @@ void applysieve(data_t* bufptr)
 int main(int argc, char*argv[])
 {
   long long time = 0;
-  int max_loops = 1024;
+  int max_loops = 100;
   unsigned row, col, coreid, first;
   e_platform_t platform;
   e_epiphany_t dev;
@@ -535,7 +536,7 @@ int main(int argc, char*argv[])
   // Process last set of results.
   applysieve(curbuf);
 
-#if 1
+#if 0
   // Print k's with no low factor.
   for (unsigned i = 0; i < SIEVE_SIZE; ++i)
   {

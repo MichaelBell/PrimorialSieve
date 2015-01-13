@@ -70,17 +70,27 @@ static void mult(el* res, el* a, el b)
   res[NUM_LEN] = c;
 } 
 
+// res = (a*b) + c
+static void mult_add(el* res, el* a, el b, el* c)
+{
+  el d = 0;
+  for (int i = 0; i < NUM_LEN; ++i)
+  {
+    el2 t = a[i] * b + c[i] + d;
+    d = (el)(t >> EL_BITS);
+    res[i] = (el)(t & EL_MASK);
+  }
+  res[NUM_LEN] = c[NUM_LEN] + d;
+}
+
 static void mont_step(el* res, el* a, el* b, el* p, el invp)
 {
-  numl_t t;
   numl_t r = {0};
   for (int i = 0; i < NUM_LEN; ++i)
   {
-    mult(t, a, b[i]);
-    addl(r, r, t);
+    mult_add(r, a, b[i], r);
     el2 q = ((1 << EL_BITS) - r[0]) * invp;
-    mult(t, p, (el)(q & EL_MASK));
-    addl(r, r, t);
+    mult_add(r, p, (el)(q & EL_MASK), r);
     for (int j = 1; j <= NUM_LEN; ++j)
     {
       r[j-1] = r[j];
@@ -90,27 +100,21 @@ static void mont_step(el* res, el* a, el* b, el* p, el invp)
   set(res, r);
 }
 
-static unsigned long long mulmod64(unsigned long long a, unsigned long long b, unsigned long long p)
-{
-  unsigned long long acc = 0;
-  for (int i = 45; i >= 0; --i)
-  {
-    acc <<= 1;
-    acc = (acc > p) ? (acc - p) : acc;
-    if ((b >> i) & 1)
-    {
-      acc += a;
-      acc = (acc > p) ? (acc - p) : acc;
-    }
-  }
-  return acc;
-}
-
 static void mont_init(el* res, unsigned long long p)
 {
-  unsigned long long r = 1ll << 45;
-  r %= p;
-  r = mulmod64(r, r, p);
+  unsigned rhigh = 1;
+  unsigned phigh = p >> 32;
+  unsigned long long r;
+  int i;
+  for (i = 32; rhigh < phigh; ++i)
+    rhigh <<= 1;
+  r = (unsigned long long)rhigh << 32;
+  for (; i < 90; ++i)
+  {
+    if (r > p) r -= p;
+    r <<= 1;
+  }
+  if (r > p) r -= p;
   sets(res, r);
 }
 
@@ -181,12 +185,12 @@ static unsigned long long inverse(unsigned long long a, unsigned long long b)
   return s;
 }
 
-static unsigned long long invpow2(unsigned long long a, unsigned long long m)
+static unsigned invpow2(unsigned a, unsigned m)
 {
   // m is a power of 2.
   m >>= 1;
-  unsigned long long u = 1, v = 0;
-  unsigned long long alpha = m, beta = a;
+  unsigned u = 1, v = 0;
+  unsigned alpha = m, beta = a;
 
   while (m > 0) 
   {
@@ -212,7 +216,7 @@ num_t prim[NUM_PRIM];
 unsigned long long doprimorial(unsigned long long p64)
 {
   num_t p, primbar, res, mi, t, u, one;
-  el invp = invpow2(p64, 1 << EL_BITS);
+  el invp = invpow2(p64 & EL_MASK, 1 << EL_BITS);
   sets(p, p64);
   mont_init(mi, p64);
 
